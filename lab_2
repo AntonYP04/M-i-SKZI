@@ -1,0 +1,270 @@
+#include <cmath>
+#include <fstream>
+#include <iostream>
+#include <stdio.h>
+using namespace std;
+
+int main()
+{
+    int rlz1 = 34789;        // Начальное состояние РЛЗ1
+    int short bit_gamma = 0; // Символ выходной последовательности такта
+    int short buffer = 0; // Переменная для переноса числа в другую ячейку массива (для rlz2)
+    long long int rlz2[2] = { 15634875, 65278365412 }; //Начальное состояние РЛЗ2
+    long long int mask = 0;
+    long long int data = 0;
+    long long int tt = 0;
+    unsigned long long int gamma = 0; // Выходная последовательность бит
+    unsigned long long int gamma_sdvig = 0;
+    long long int tau = 0;
+    char plaintext[16] = {};
+    char code[16] = {};
+    int c = 0;
+    long double akf;
+    int t;
+    long long int l = 0;
+    int i = 0;
+    int inv = 0;
+    double f;
+    int combo;
+    int num = 0;
+    int short rab;
+    int short shift;
+    double p[2] = { 0, 0 };
+    long long int p1[2] = { 0, 0 };
+    long long int p2[4] = { 0, 0, 0, 0 };
+    long long int p3[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    long long int p4[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    string str1 = "01";
+    string str2 = "00011011";
+    string str3 = "000001010011100101110111";
+    string str4 = "0000000100100011010001010110011110001001101010111100110111101111";
+    cout << "Выбор режима работы:\n 0 - маскирование данных в файл \n 1 - маскирование данных с преобладающей гаммой в "
+            "файл \n 2 - определение частоты появления бит вырабатываемой последовательности\n 3 - определение частоты "
+            "появления бит открытого текста или замаскированных данных\n 4 - вычисление АКФ\n";
+    cin >> rab;
+
+    if(rab >= 2 && rab <= 3) {
+        cout << "Введите длину комбинации (от 1 до 4): ";
+        cin >> combo;
+    }
+
+    if(rab == 2) {
+        cout << "Введите число исследуемых символов: ";
+        cin >> t;
+    }
+
+    if(rab == 4) {
+        cout << "Введите значение сдвига (от 0 до 32): ";
+        cin >> shift;
+    }
+
+    if(rab == 0 || rab == 1 || rab == 5) {
+        cout << "Введите имя файла, в котором хранится открытый текст: ";
+        cin >> plaintext;
+        cout << "Введите имя файла, в который сохранится шифртекст: ";
+        cin >> code;
+        ofstream out(code, ios::binary);
+        ifstream in(plaintext, ios::binary);
+        while(in.read((char*)&data, sizeof(long long int))) {
+            for(int i = 0; i < 64; i++) {
+                gamma = gamma << 1;
+                bit_gamma = ((((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1) ^ (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1));
+                if(bit_gamma == 1 && rab == 1) {
+                    inv++;
+                    if(inv == 5) {
+                        bit_gamma = 0;
+                        inv = 0;
+                    }
+                }
+                if(bit_gamma == 0) {
+                    inv = 0;
+                }
+                gamma = gamma + bit_gamma;
+                rlz1 = rlz1 << 1;
+                rlz1 = rlz1 + (((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1); // Запись бита обратной связи
+                buffer = (rlz2[1] >> 63) & 0x1;
+                rlz2[0] = rlz2[0] << 1;
+                rlz2[1] = rlz2[1] << 1;
+                rlz2[0] = rlz2[0] + buffer;
+                rlz2[1] = rlz2[1] + (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1); // Запись бита обратной связи
+            }
+
+            mask = data ^ gamma;
+            out.write((char*)&mask, sizeof(long long int));
+        }
+        in.close();
+        out.close();
+        return 0;
+    }
+
+    if(rab == 2) {
+        l = t;
+        while(t > 0) {
+            gamma = gamma << 1;
+            bit_gamma = ((((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1) ^ (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1));
+            gamma = gamma + bit_gamma;
+            rlz1 = rlz1 << 1;
+            rlz1 = rlz1 + (((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1); // Запись бита обратной связи
+            buffer = (rlz2[1] >> 63) & 0x1;
+            rlz2[0] = rlz2[0] << 1;
+            rlz2[1] = rlz2[1] << 1;
+            rlz2[0] = rlz2[0] + buffer;
+            rlz2[1] = rlz2[1] + (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1); // Запись бита обратной связи
+            c = (c << 1) | gamma;
+            p1[c & 0x1] += 1;
+            p2[c & 0x3] += 1;
+            p3[c & 0x7] += 1;
+            p4[c & 0xf] += 1;
+            t--;
+        }
+        cout << "Число полученных комбинаций: \n";
+        if(combo == 1) {
+            cout << "Вероятность однобитных последовательностей: \n";
+            for(char j : str1) {
+                cout << j;
+                if(++num == 1) {
+                    f = (1.0 * p1[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        if(combo == 2) {
+            cout << "Вероятность двухбитных последовательностей: \n";
+            for(char j : str2) {
+                cout << j;
+                if(++num == 2) {
+                    f = (1.0 * p2[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        if(combo == 3) {
+            cout << "Вероятность трехбитных последовательностей: \n";
+            for(char j : str3) {
+                cout << j;
+                if(++num == 3) {
+                    f = (1.0 * p3[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        if(combo == 4) {
+
+            cout << "Вероятность четырехбитных последовательностей: \n";
+            for(char j : str4) {
+                cout << j;
+                if(++num == 4) {
+                    f = (1.0 * p4[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        return 0;
+    }
+
+    if(rab == 3) {
+        cout << "Введите имя файла, в котором хранится открытый текст или шифртекст: ";
+        cin >> plaintext;
+        ifstream in(plaintext, ios::binary);
+        while(in.read((char*)&data, sizeof(long long int))) {
+            for(int i = 0; i < 64; i++) {
+                buffer = ((data >> 63) & 0x1);
+                c = (c << 1) | buffer;
+                p1[c & 0x1] += 1;
+                p2[c & 0x3] += 1;
+                p3[c & 0x7] += 1;
+                p4[c & 0xf] += 1;
+                data = data << 1;
+                l++;
+            }
+        }
+        cout << "Число полученных комбинаций: \n";
+        if(combo == 1) {
+            cout << "Вероятность однобитных последовательностей: \n";
+            for(char j : str1) {
+                cout << j;
+                if(++num == 1) {
+                    f = (1.0 * p1[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        if(combo == 2) {
+            cout << "Вероятность двухбитных последовательностей: \n";
+            for(char j : str2) {
+                cout << j;
+                if(++num == 2) {
+                    f = (1.0 * p2[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        if(combo == 3) {
+            cout << "Вероятность трехбитных последовательностей: \n";
+            for(char j : str3) {
+                cout << j;
+                if(++num == 3) {
+                    f = (1.0 * p3[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        if(combo == 4) {
+            cout << "Вероятность четырехбитных последовательностей: \n";
+            for(char j : str4) {
+                cout << j;
+                if(++num == 4) {
+                    f = (1.0 * p4[i]) / (1.0 * l);
+                    cout << " - " << f << "\n";
+                    i++;
+                    num = 0;
+                }
+            }
+        }
+        return 0;
+    }
+
+    if(rab == 4) {
+        for(int j = 0; j < 15625; j++) {
+            for(int i = 0; i < 64; i++) {
+                gamma = gamma << 1;
+                bit_gamma = ((((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1) ^ (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1));
+                gamma = gamma + bit_gamma;
+                rlz1 = rlz1 << 1;
+                rlz1 = rlz1 + (((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1); // Запись бита обратной связи
+                buffer = (rlz2[1] >> 63) & 0x1;
+                rlz2[0] = rlz2[0] << 1;
+                rlz2[1] = rlz2[1] << 1;
+                rlz2[0] = rlz2[0] + buffer;
+                rlz2[1] = rlz2[1] + (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1); // Запись бита обратной связи
+            }
+            tt = gamma << (64 - shift);
+            gamma_sdvig = (gamma >> shift) | tt;
+            tau = (gamma ^ gamma_sdvig);
+            for(int i = 0; i < 64; i++) {
+                buffer = ((tau >> 63) & 0x1);
+                c = (c << 1) | buffer;
+                p[c & 0x1] += 1;
+                tau = tau << 1;
+            }
+        }
+        p[0] = p[0] - shift;
+        akf = ((p[0] - p[1]) / (p[0] + p[1]));
+        cout << "Значение АКФ: " << akf;
+    }
+    return 0;
+}
