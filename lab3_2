@@ -1,0 +1,60 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <sstream>
+#include <iomanip>
+
+using namespace std;
+
+int main()
+{
+    string binarySequence;
+
+    // 1. Ввод двоичной последовательности и разбиение на 8-битные части
+    cout << "Введите двоичную последовательность: ";
+    cin >> binarySequence;
+    int n = binarySequence.length() / 8;
+
+
+    // Проверка длины последовательности
+    if (binarySequence.length() % (n * 8) != 0) {
+        cout << "Ошибка: Длина последовательности не кратна " << n * 8 << endl;
+        return 1;
+    }
+
+    vector<int> decimalValues;
+    for (int i = 0; i < binarySequence.length(); i += 8) {
+        string byte = binarySequence.substr(i, 8);
+        int decimalValue = stoi(byte, nullptr, 2);
+        decimalValues.push_back(decimalValue);
+    }
+
+    // 2. Создание двух одинаковых массивов с шестнадцатеричными значениями
+    string hexValues[] = { "2", "A", "5", "B", "9", "E", "8", "D", "C", "4", "6", "7", "0", "3", "F", "1"};
+    string hexArray1[16], hexArray2[16];
+    copy(begin(hexValues), end(hexValues), begin(hexArray1));
+    copy(begin(hexValues), end(hexValues), begin(hexArray2));
+
+    // 3. Создание нового массива путем конкатенации элементов двух массивов
+    string combinedHexArray[256];
+    int k = 0;
+    for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+            combinedHexArray[k++] = hexArray1[i] + hexArray2[j];
+        }
+    }
+
+    // 4. Вывод результатов с заменой индексов
+    cout << "Результат:" << endl;
+    for (int i = 0; i < decimalValues.size(); i++) {
+        int index = decimalValues[i];
+        if (index >= 0 && index < 256) {
+            cout << combinedHexArray[index] << " ";
+        } else {
+            cout << "Invalid index: " << index << endl;
+        }
+    }
+    cout << endl;
+
+    return 0;
+}
