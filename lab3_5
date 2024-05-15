@@ -1,0 +1,54 @@
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <string>
+
+using namespace std;
+
+int main()
+{
+    // 1. Создаем и заполняем два массива шестнадцатеричных чисел
+    const int HEX_ARRAY_SIZE = 16;
+    unsigned char hexArray1[HEX_ARRAY_SIZE] = { 0x2, 0xA, 0x5, 0xB, 0x9, 0xE, 0x8, 0xD,
+                                                0xC, 0x4, 0x6, 0x7, 0x0, 0x3, 0xF, 0x1 };
+    unsigned char hexArray2[HEX_ARRAY_SIZE] = { 0x2, 0xA, 0x5, 0xB, 0x9, 0xE, 0x8, 0xD,
+                                                0xC, 0x4, 0x6, 0x7, 0x0, 0x3, 0xF, 0x1 };
+
+    // 2. Создаем массив для конкатенации
+    const int CONCAT_ARRAY_SIZE = 256;
+    unsigned char concatArray[CONCAT_ARRAY_SIZE];
+    int concatIndex = 0;
+
+    // Конкатенируем шестнадцатеричные числа
+    for(int i = 0; i < HEX_ARRAY_SIZE; ++i) {
+        for(int j = 0; j < HEX_ARRAY_SIZE; ++j) {
+            concatArray[concatIndex++] = (hexArray1[i] << 4) | hexArray2[j];
+        }
+    }
+
+    // 3. Циклически сдвигаем каждый элемент вправо на 4 бита
+    for(int i = 0; i < CONCAT_ARRAY_SIZE; ++i) {
+        concatArray[i] = (concatArray[i] >> 4) | (concatArray[i] << 4);
+    }
+
+    // 4. Считываем данные из файла
+    const int DATA_ARRAY_SIZE = 2048; // Предполагаем, что в файле 2048 байт
+    unsigned char dataArray[DATA_ARRAY_SIZE];
+    ifstream inputFile("/home/stud/1.bin", ios::binary);
+
+    if(!inputFile) {
+        cerr << "Ошибка открытия файла!" << endl;
+        return 1;
+    }
+
+    inputFile.read(reinterpret_cast<char*>(dataArray), DATA_ARRAY_SIZE);
+    inputFile.close();
+
+    // 5. Выводим элементы массива, используя dataArray как индексы
+    for(int i = 0; i < DATA_ARRAY_SIZE; ++i) {
+        cout << hex << setw(2) << setfill('0') << static_cast<int>(concatArray[dataArray[i]]) << " ";
+    }
+    cout << endl;
+
+    return 0;
+}
