@@ -1,0 +1,55 @@
+#include <iostream>
+#include <fstream>
+#include <bitset>
+#include <vector>
+
+using namespace std;
+
+int main() {
+    // 1. Заполнение массива шестнадцатеричных чисел
+    unsigned char hexArray[16] = {0x2, 0xA, 0x5, 0xB, 0x9, 0xE, 0x8, 0xD,
+                                    0xC, 0x4, 0x6, 0x7, 0x0, 0x3, 0xF, 0x1};
+
+    // 2. Чтение данных из файла и разделение на два массива
+    ifstream inputFile("/home/stud/1.bin", ios::binary);
+    if (!inputFile.is_open()) {
+        cerr << "Ошибка открытия файла" << endl;
+        return 1;
+    }
+
+    vector<unsigned char> array1, array2;
+    unsigned char byte;
+    while (inputFile.read((char*)&byte, sizeof(byte))) {
+        array1.push_back(byte >> 4); // Первые 4 бита
+        array2.push_back(byte & 0x0F); // Последние 4 бита
+    }
+    inputFile.close();
+
+    // 3. Замена элементов массивов
+    for (size_t i = 0; i < array1.size(); ++i) {
+        unsigned char temp1 = array1[i];
+        unsigned char temp2 = array2[i];
+
+        array1[i] = hexArray[temp1];
+        array2[i] = hexArray[temp2];
+    }
+
+    // 4. Конкатенация элементов массивов
+    vector<unsigned char> concatenatedArray;
+    for (size_t i = 0; i < array1.size(); ++i) {
+        concatenatedArray.push_back((array1[i] << 4) | array2[i]);
+    }
+
+    // 5. Циклический сдвиг вправо на 4 бита
+    for (size_t i = 0; i < concatenatedArray.size(); ++i) {
+        concatenatedArray[i] = (concatenatedArray[i] >> 4) | ((concatenatedArray[i] << 4) & 0xF0);
+    }
+
+    // 6. Вывод результатов
+    cout << "Результат:" << endl;
+    for (unsigned char value : concatenatedArray) {
+        cout << hex << (int)value << " ";
+    }
+
+    return 0;
+}
