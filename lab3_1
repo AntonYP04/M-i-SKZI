@@ -1,0 +1,54 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <cmath>
+
+using namespace std;
+
+int main()
+{
+    // 1) Ввод двоичной последовательности и разбиение на 4-битные части
+    string binarySequence;
+    cout << "Введите двоичную последовательность: ";
+    cin >> binarySequence;
+
+    int n = binarySequence.length() / 4; // Количество 4-битных частей
+
+    // Проверка на кратность 4S
+    if (binarySequence.length() % 4 != 0) {
+        cout << "Ошибка: Длина двоичной последовательности должна быть кратна 4." << endl;
+        return 1;
+    }
+
+    // Массив для хранения десятичных чисел
+    vector<int> decimalValues(n);
+
+    // Разбиение на 4-битные части и перевод в десятичное
+    for (int i = 0; i < n; i++) {
+        string part = binarySequence.substr(i * 4, 4);
+        decimalValues[i] = stoi(part, nullptr, 2); // Преобразование в десятичное
+    }
+
+    // 2) Массив с шестнадцатиричными числами
+    string hexNumbers[16] = {
+        "2", "A", "5", "B", "9", "E", "8", "D",
+        "C", "4", "6", "7", "0", "3", "F", "1"
+    };
+
+    // 3) Замена и вывод результата
+    cout << "Результат: ";
+    for (int i = 0; i < n; i++) {
+        int index = decimalValues[i]; // Индекс из массива десятичных чисел
+
+        // Проверка на корректность индекса
+        if (index >= 0 && index < 16) {
+            cout << hexNumbers[index];
+        } else {
+            cout << "Ошибка: Индекс вне допустимого диапазона." << endl;
+            return 1;
+        }
+    }
+
+    cout << endl;
+    return 0;
+}
