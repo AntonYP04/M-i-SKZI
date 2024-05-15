@@ -1,0 +1,42 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <bitset>
+
+using namespace std;
+
+int main()
+{
+    string binarySequence;
+
+    // Ввод двоичной последовательности и количества частей
+    cout << "Введите двоичную последовательность: ";
+    cin >> binarySequence;
+    int n = binarySequence.length() / 8;
+
+    // Проверка длины последовательности
+    if (binarySequence.length() % (n * 8) != 0) {
+        cout << "Ошибка: длина последовательности не кратна n * 8" << endl;
+        return 1;
+    }
+
+    // Разделение последовательности на части и сохранение в массиве
+    vector<bitset<8>> parts;
+    for (int i = 0; i < binarySequence.length(); i += 8) {
+        string part = binarySequence.substr(i, 8);
+        parts.push_back(bitset<8>(part));
+    }
+
+    // Циклический сдвиг вправо на 4 бита для каждого элемента
+    for (bitset<8>& part : parts) {
+        part = (part >> 4) | (part << 4);
+    }
+
+    // Вывод сдвинутых элементов
+    cout << "Сдвинутые элементы:" << endl;
+    for (const bitset<8>& part : parts) {
+        cout << part << endl;
+    }
+
+    return 0;
+}
