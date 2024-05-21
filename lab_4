@@ -1,59 +1,21 @@
-#include <cstring>
-#include <fstream>
 #include <iostream>
-#include <stdexcept>
-#include <vector>
-#include <algorithm>
+#include <fstream>
 #include <bitset>
+#include <vector>
+#include <stdexcept>
+#include <unistd.h>
+#include <algorithm>
 
 using namespace std;
-// Функция для генерации ключа и сохранения его в файл
-void generateKey(const string& keyFile) {
-    int short rlz1 = 34789; // Начальное состояние первой рекурентной линии задержки
-    long long int rlz2[2] = { 15634875, 65278365412 }; // Начальное состояние второй рекурентной линии задержки
-    long long int gamma = 0; // Выходная последовательность
-    for (int i = 0; i < 56; i++) {
-        gamma = (gamma << 1) | ((((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1) ^ (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1)); // Формирование и сдвиг выходной последовательности
-        rlz1 = (rlz1 << 1) | (((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1); // Сдвиг РЛЗ1 и запись бита обратной связи
-        int short buffer = (rlz2[1] >> 63) & 0x1; // Запись в буффер первого символа второй части РЛЗ2
-        rlz2[0] = (rlz2[0] << 1) | buffer; // Сдвиг первой части РЛЗ2 и запись символа из буффера
-        rlz2[1] = (rlz2[1] << 1) | (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1); // Сдвиг второй части РЛЗ2 и запись бита обратной связи
-    }
 
-    ofstream file(keyFile, ios::binary);
-    if (file.is_open()) {
-        bitset<56> gamma_bits(gamma); // преобразует гамму в 56-битную двоичную строку
-        string gamma_str = gamma_bits.to_string(); // преобразовать набор битов в строку
-        for (char c : gamma_str) {
-            file.put(c == '1' ? 0x01 : 0x00); // запиcываем каждый бит в виде байта (0x01 для 1, 0x00 для 0).
-        }
-        file.close();
-    } else {
-        cout << "Не удается открыть файл";
-        exit(1);
-    }
-}
+const int BLOCK_SIZE = 64; // Размер блока в битах
+const int KEY_SIZE = 56; // Размер ключа в битах
+const int EXPANDED_KEY_SIZE = 256; // Размер развернутого ключа в битах
+const int MAX_ENCRYPTION_SIZE = 20 * 1024; // Максимальный размер открытого текста для зашифрования (в байтах)
+const int WARNING_ENCRYPTION_SIZE = 10 * 1024; // Размер открытого текста, при котором выводится предупреждение (в байтах)
 
-// Функция считывания ключа из файла
-vector<unsigned char> readKey(const string& keyFile) {
-    ifstream file(keyFile, ios::binary);
-    if (file.is_open()) {
-        vector<unsigned char> key(32, 0); // Предполагается, что 256-битный ключ (32 байта)
-        char bit;
-        for (int i = 0; i < 56; ++i) {
-            file.get(bit);
-            key[i / 8] |= (bit == 0x01) << (7 - i % 8); // Преобразованийе бит в байты
-        }
-        file.close();
-        return key;
-    } else {
-        cout << "Не удается открыть файл";
-        exit(1);
-    }
-}
-
-// Таблица подстановок
-const uint8_t sbox[8][16] = {
+// Таблица замены (S-блоки)
+const unsigned char sbox[8][16] = {
     {12, 4, 6, 2, 10, 5, 11, 9, 14, 8, 13, 7, 0, 3, 15, 1},
     {6, 8, 2, 3, 9, 10, 5, 12, 1, 14, 4, 7, 11, 13, 0, 15},
     {11, 3, 5, 8, 2, 15, 10, 13, 14, 1, 7, 4, 12, 9, 6, 0},
@@ -64,251 +26,352 @@ const uint8_t sbox[8][16] = {
     {1, 7, 14, 13, 0, 5, 8, 3, 4, 15, 10, 6, 9, 12, 11, 2}
 };
 
-// Функция развертывания ключа
-vector<uint32_t> keyExpansion(const vector<unsigned char>& key) {
-    vector<uint32_t> expandedKey(32);
-    for (int i = 0; i < 8; i++) {
-        expandedKey[i] = (key[i * 4] << 24) | (key[i * 4 + 1] << 16) | (key[i * 4 + 2] << 8) | key[i * 4 + 3];
+// Функция для генерации ключа с использованием ПСП и записи его в файл key.key
+void generateAndWriteKey(const string& filename)
+{
+    int rlz1 = 34789; // Начальное состояние первой рекурентной линии задержки
+    int bit_gamma = 0; // Символ выходной последовательности в определенном такте
+    int buffer = 0; // Переменная для переноса числа в другую ячейку массива
+    long long int rlz2[2] = { 15634875, 65278365412 }; // Начальное состояние второй рекурентной линии задержки
+    long long int gamma = 0; // Выходная последовательность
+
+    for (int i = 0; i < 56; i++) {
+        gamma = gamma << 1; // Сдвиг выходной последовательности на 1 бит
+        bit_gamma = ((((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1) ^ (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1)); // Формирование символа выходной последовательности в определенном такте
+        gamma = gamma + bit_gamma; // Прибавление символа выходной последовательности
+        rlz1 = rlz1 << 1; // Сдвиг РЛЗ1 на 1 бит влево
+        rlz1 = rlz1 + (((rlz1 >> 11) ^ (rlz1 >> 18)) & 0x1); // Запись бита обратной связи в РЛЗ1
+        buffer = (rlz2[1] >> 63) & 0x1; // Запись в буфер первого символа второй части РЛЗ2
+        rlz2[0] = rlz2[0] << 1; // Сдвиг первой части РЛЗ2 на 1 бит
+        rlz2[1] = rlz2[1] << 1; // Сдвиг второй части РЛЗ2 на 1 бит
+        rlz2[0] = rlz2[0] + buffer; // Запись первого символа второй части РЛЗ2 в конец первой части РЛЗ1
+        rlz2[1] = rlz2[1] + (((rlz2[0] >> 40) ^ (rlz2[0] >> 49)) & 0x1); // Запись бита обратной связи в РЛЗ2
     }
-    for (int i = 8; i < 32; i++) {
-        expandedKey[i] = expandedKey[i - 8];
+
+    ofstream file(filename, ios::binary);
+    if (file.is_open()) {
+        bitset<56> gamma_bits(gamma); // convert gamma to a 56-bit binary string
+        string gamma_str = gamma_bits.to_string(); // convert bitset to a string
+        for (char c : gamma_str) {
+            file.put(c == '1' ? 0x01 : 0x00); // write each bit as a byte (0x01 for 1, 0x00 for 0)
+        }
+        file.close();
+    } else {
+        throw runtime_error("Unable to open file: " + filename);
     }
+}
+
+// Функция для чтения ключа из файла
+vector<uint8_t> readKey(const string& filename)
+{
+    ifstream keyFile(filename, ios::binary);
+    if (!keyFile) {
+        throw runtime_error("Не удалось открыть файл ключа: " + filename);
+    }
+
+    vector<uint8_t> key;
+    key.resize(KEY_SIZE / 8);
+    keyFile.read(reinterpret_cast<char*>(key.data()), KEY_SIZE / 8);
+    if (keyFile.gcount() != KEY_SIZE / 8) {
+        throw std::runtime_error("Неверный размер ключа. Ожидается 56 бит.");
+    }
+
+    keyFile.close();
+    return key;
+}
+
+// Функция для развертывания ключа
+vector<unsigned char> expandKey(const vector<unsigned char>& key)
+{
+    vector<unsigned char> expandedKey(EXPANDED_KEY_SIZE / 8);
+    for (int i = 0; i < 4; ++i) {
+        copy(key.begin(), key.end(), expandedKey.begin() + i * (KEY_SIZE / 8));
+    }
+    copy(key.begin(), key.begin() + 4, expandedKey.end() - 4);
     return expandedKey;
 }
-// Объявление функции f
-uint32_t f(uint32_t right, uint32_t roundKey);
-
-// Функция шифрования блока
-void encryptBlock(uint32_t& left, uint32_t& right, const vector<uint32_t>& roundKeys) {
-    for (int i = 0; i < 32; i++) {
-        uint32_t temp = right;
-        right = left ^ f(right, roundKeys[i]);
-        left = temp;
+// Функция для дополнения блока открытого текста
+vector<unsigned char> padBlock(const vector<unsigned char>& block)
+{
+    vector<unsigned char> paddedBlock(block);
+    paddedBlock.push_back(0x80); // Добавление бита "1"
+    while (paddedBlock.size() % (BLOCK_SIZE / 8) != 0) {
+        paddedBlock.push_back(0x00); // Добавление битов "0"
     }
+    return paddedBlock;
 }
 
-// Функция расшифрования блока
-void decryptBlock(uint32_t& left, uint32_t& right, const vector<uint32_t>& roundKeys) {
-    for (int i = 31; i >= 0; i--) {
-        uint32_t temp = left;
-        left = right ^ f(left, roundKeys[i]);
-        right = temp;
-    }
+// Функция для применения S-блока
+unsigned char applySbox(unsigned char input, int sboxIndex)
+{
+    return sbox[sboxIndex][input];
 }
 
-// Функция f
-uint32_t f(uint32_t right, uint32_t roundKey) {
-    uint32_t result = 0;
-    for (int i = 0; i < 8; i++) {
-        uint8_t val = (right >> (4 * i)) & 0xF;
-        result |= (static_cast<uint32_t>(sbox[i][val]) << (4 * i));
+// Функция для циклического сдвига влево
+unsigned int rotateLeft(unsigned int value, int shift)
+{
+    return (value << shift) | (value >> (32 - shift));
+}
+
+// Функция f для преобразования блока данных
+unsigned int f(unsigned int block, unsigned int subkey)
+{
+    block = (block + subkey) % 0x100000000;
+
+    unsigned int result = 0;
+    for (int i = 0; i < 8; ++i) {
+        unsigned char sboxInput = (block >> (4 * i)) & 0xF;
+        unsigned char sboxOutput = applySbox(sboxInput, i);
+        result |= (sboxOutput << (4 * i));
     }
-    result = (result << 11) | (result >> 21);
-    result ^= roundKey;
+
+    result = rotateLeft(result, 11);
+
     return result;
 }
+// Функция для зашифрования блока данных
+vector<unsigned char> encryptBlock(const vector<unsigned char>& block, const vector<unsigned char>& key)
+{
+    unsigned int left = (block[0] << 24) | (block[1] << 16) | (block[2] << 8) | block[3];
+    unsigned int right = (block[4] << 24) | (block[5] << 16) | (block[6] << 8) | block[7];
 
-// Функция дополнения блока
-void padBlock(vector<unsigned char>& block) {
-    size_t originalSize = block.size();
-    size_t paddedSize = ((originalSize + 7) / 8) * 8;
-    block.resize(paddedSize); // расширяем до размера кратного 8 байтам
-    for (size_t i = originalSize; i < paddedSize; ++i) {
-        block[i] = 0x00; // заполняем оставшееся пространство нулями
+    for (int i = 0; i < 32; ++i) {
+        unsigned int keyIndex = (i % 8) * 4;
+        unsigned int subkey = (key[keyIndex] << 24) | (key[keyIndex + 1] << 16) | (key[keyIndex + 2] << 8) | key[keyIndex + 3];
+
+        unsigned int temp = right;
+        right = left ^ f(right, subkey);
+        left = temp;
     }
-    // добавляем байт с информацией о количестве добавленных байтов
-    block[paddedSize - 1] = static_cast<unsigned char>(originalSize);
+
+    vector<unsigned char> encryptedBlock(8);
+    encryptedBlock[0] = (left >> 24) & 0xFF;
+    encryptedBlock[1] = (left >> 16) & 0xFF;
+    encryptedBlock[2] = (left >> 8) & 0xFF;
+    encryptedBlock[3] = left & 0xFF;
+    encryptedBlock[4] = (right >> 24) & 0xFF;
+    encryptedBlock[5] = (right >> 16) & 0xFF;
+    encryptedBlock[6] = (right >> 8) & 0xFF;
+    encryptedBlock[7] = right & 0xFF;
+
+    return encryptedBlock;
 }
-// Функция шифрования
-void encrypt(const string& inputFile, const string& outputFile, const string& keyFile) {
-    generateKey(keyFile); // генерация ключа
-    vector<unsigned char> key = readKey(keyFile); // Чтение ключа из файла
-    ifstream keyStream(keyFile, ios::binary);
-    if (!keyStream) {
-        throw runtime_error("Не удалось открыть файл с ключом");
-    }
-    keyStream.read(reinterpret_cast<char*>(key.data()), 32);
-    if (keyStream.gcount() != 32) {
-        throw runtime_error("Недопустимый размер ключа");
-    }
-    keyStream.close();
-    vector<uint32_t> roundKeys = keyExpansion(key);
 
-    ifstream inputStream(inputFile, ios::binary);
-    if(!inputStream) {
-        throw runtime_error("Не удалось открыть входной файл");
+// Функция для расшифрования блока данных
+vector<unsigned char> decryptBlock(const vector<unsigned char>& block, const vector<unsigned char>& key)
+{
+    unsigned int left = (block[0] << 24) | (block[1] << 16) | (block[2] << 8) | block[3];
+    unsigned int right = (block[4] << 24) | (block[5] << 16) | (block[6] << 8) | block[7];
+
+    for (int i = 31; i >= 0; --i) {
+        unsigned int keyIndex = (i % 8) * 4;
+        unsigned int subkey = (key[keyIndex] << 24) | (key[keyIndex + 1] << 16) | (key[keyIndex + 2] << 8) | key[keyIndex + 3];
+
+        unsigned int temp = left;
+        left = right ^ f(left, subkey);
+        right = temp;
     }
-    ofstream outputStream(outputFile, ios::binary);
-    if(!outputStream) {
-        throw runtime_error("Не удалось открыть выходной файл");
+
+    vector<unsigned char> decryptedBlock(8);
+    decryptedBlock[0] = (left >> 24) & 0xFF;
+    decryptedBlock[1] = (left >> 16) & 0xFF;
+    decryptedBlock[2] = (left >> 8) & 0xFF;
+    decryptedBlock[3] = left & 0xFF;
+    decryptedBlock[4] = (right >> 24) & 0xFF;
+    decryptedBlock[5] = (right >> 16) & 0xFF;
+    decryptedBlock[6] = (right >> 8) & 0xFF;
+    decryptedBlock[7] = right & 0xFF;
+
+    return decryptedBlock;
+}
+// Функция для зашифрования файла
+void encryptFile(const string& inputFile, const string& outputFile, const vector<unsigned char>& key)
+{
+    ifstream inFile(inputFile, ios::binary);
+    if (!inFile) {
+        throw runtime_error("Failed to open input file");
     }
+
+    ofstream outFile(outputFile, ios::binary);
+    if (!outFile) {
+        throw runtime_error("Failed to create output file");
+    }
+
+    // Get the size of the input file
+    inFile.seekg(0, ios::end);
+    uint64_t fileSize = inFile.tellg();
+    inFile.seekg(0, ios::beg);
+
+    // If file size is between 10 and 20 KB, warn user to change the key
+    if (fileSize >= 10 * 1024 && fileSize < 20 * 1024) {
+        cerr << "Warning: File size is between 10 and 20 KB. It is recommended to change the key." << endl;
+    } 
+    // If file size is greater than or equal to 20 KB, do not encrypt and throw an error
+    else if (fileSize >= 20 * 1024) {
+        throw runtime_error("File size is too large. Encryption is not allowed.");
+    }
+
+    // Записываем размер исходного файла в зашифрованный файл
+    outFile.write(reinterpret_cast<const char*>(&fileSize), sizeof(fileSize));
 
     vector<unsigned char> block;
-    unsigned char buffer[8];
-    size_t bytesEncrypted = 0;
-    bool keyChangeWarningIssued = false; // Флаг для отслеживания вывода предупреждения
-    while (inputStream.read(reinterpret_cast<char*>(buffer), 8)) {
-        block.assign(buffer, buffer + 8);
-        uint32_t left = (block[3] << 24) | (block[2] << 16) | (block[1] << 8) | block[0];
-        uint32_t right = (block[7] << 24) | (block[6] << 16) | (block[5] << 8) | block[4];
-        encryptBlock(left, right, roundKeys);
-        block[3] = (left >> 24) & 0xFF;
-        block[2] = (left >> 16) & 0xFF;
-        block[1] = (left >> 8) & 0xFF;
-        block[0] = left & 0xFF;
-        block[7] = (right >> 24) & 0xFF;
-        block[6] = (right >> 16) & 0xFF;
-        block[5] = (right >> 8) & 0xFF;
-        block[4] = right & 0xFF;
-        outputStream.write(reinterpret_cast<const char*>(block.data()), 8);
-        bytesEncrypted += 8;
-        if(bytesEncrypted >= 10240 && !keyChangeWarningIssued) { // Проверяем флаг перед выводом
-            cout << "Внимание: Ключ должен быть заменен" << endl;
-            keyChangeWarningIssued = true; // Устанавливаем флаг, чтобы предупреждение больше не выводилось
-        }
-        if(bytesEncrypted >= 20480) {
-            throw runtime_error("Превышен лимит шифрования");
+    unsigned char byte;
+    while (inFile.get(reinterpret_cast<char&>(byte))) {
+        block.push_back(byte);
+
+        if (block.size() == BLOCK_SIZE / 8) {
+            vector<unsigned char> encryptedBlock = encryptBlock(block, key);
+            outFile.write(reinterpret_cast<const char*>(encryptedBlock.data()), encryptedBlock.size());
+            block.clear();
         }
     }
-     // Обработка последнего блока
-    block.clear();
-    inputStream.read(reinterpret_cast<char*>(buffer), inputStream.gcount());
-    block.assign(buffer, buffer + inputStream.gcount());
-    padBlock(block);
 
-    // Шифрование последнего блока
-    for (size_t i = 0; i < block.size(); i += 8) {
-        uint32_t left = (block[i] << 24) | (block[i + 1] << 16) | (block[i + 2] << 8) | block[i + 3];
-        uint32_t right = (block[i + 4] << 24) | (block[i + 5] << 16) | (block[i + 6] << 8) | block[i + 7];
-        encryptBlock(left, right, roundKeys);
-        block[i] = (left >> 24) & 0xFF;
-        block[i + 1] = (left >> 16) & 0xFF;
-        block[i + 2] = (left >> 8) & 0xFF;
-        block[i + 3] = left & 0xFF;
-        block[i + 4] = (right >> 24) & 0xFF;
-        block[i + 5] = (right >> 16) & 0xFF;
-        block[i + 6] = (right >> 8) & 0xFF;
-        block[i + 7] = right & 0xFF;
+    if (!block.empty()) {
+        block = padBlock(block);
+        vector<unsigned char> encryptedBlock = encryptBlock(block, key);
+        outFile.write(reinterpret_cast<const char*>(encryptedBlock.data()), encryptedBlock.size());
+    }
+}
+
+// Функция для расшифрования файла
+void removePadding(const string& filename);
+void decryptFile(const string& inputFile, const string& outputFile, const vector<unsigned char>& key)
+{
+    ifstream inFile(inputFile, ios::binary);
+    if (!inFile) {
+        throw runtime_error("Failed to open input file");
     }
 
-outputStream.write(reinterpret_cast<const char*>(block.data()), block.size());}
-
-
-// Функция расшифрования
-void decrypt(const string& inputFile, const string& outputFile, const string& keyFile) {
-    vector<unsigned char> key = readKey(keyFile); // Чтение ключа из файла
-    ifstream keyStream(keyFile, ios::binary);
-    if (!keyStream) {
-        throw runtime_error("Не удалось открыть файл с ключом");
-    }
-    keyStream.read(reinterpret_cast<char*>(key.data()), 32);
-    if (keyStream.gcount() != 32) {
-        throw runtime_error("Недопустимый размер ключа");
-    }
-    keyStream.close();
-
-    vector<uint32_t> roundKeys = keyExpansion(key);
-
-    ifstream inputStream(inputFile, ios::binary);
-    if(!inputStream) {
-        throw runtime_error("Не удалось открыть входной файл");
-    }
-    ofstream outputStream(outputFile, ios::binary);
-    if(!outputStream) {
-        throw runtime_error("Не удалось открыть выходной файл");
+    ofstream outFile(outputFile, ios::binary);
+    if (!outFile) {
+        throw runtime_error("Failed to create output file");
     }
 
-   vector<unsigned char> block(8);
-    while (inputStream.read(reinterpret_cast<char*>(block.data()), 8)) {
-        uint32_t left = (block[3] << 24) | (block[2] << 16) | (block[1] << 8) | block[0];
-        uint32_t right = (block[7] << 24) | (block[6] << 16) | (block[5] << 8) | block[4];
-        decryptBlock(left, right, roundKeys);
-        block[3] = (left >> 24) & 0xFF;
-        block[2] = (left >> 16) & 0xFF;
-        block[1] = (left >> 8) & 0xFF;
-        block[0] = left & 0xFF;
-        block[7] = (right >> 24) & 0xFF;
-        block[6] = (right >> 16) & 0xFF;
-        block[5] = (right >> 8) & 0xFF;
-        block[4] = right & 0xFF;
-        outputStream.write(reinterpret_cast<const char*>(block.data()), 8);
+    // Читаем размер исходного файла из зашифрованного файла
+    uint64_t fileSize;
+    inFile.read(reinterpret_cast<char*>(&fileSize), sizeof(fileSize));
+
+    vector<unsigned char> block(BLOCK_SIZE / 8);
+    uint64_t decryptedSize = 0;
+    while (inFile.read(reinterpret_cast<char*>(block.data()), block.size()) && decryptedSize < fileSize) {
+        vector<unsigned char> decryptedBlock = decryptBlock(block, key);
+        outFile.write(reinterpret_cast<const char*>(decryptedBlock.data()), decryptedBlock.size());
+        decryptedSize += decryptedBlock.size();
     }
 
-   // Чтение последнего блока
-    block.resize(inputStream.gcount());
-    inputStream.read(reinterpret_cast<char*>(block.data()), block.size());
+    outFile.close();
+    truncate(outputFile.c_str(), fileSize);
+}
+vector<unsigned char> removePadding(const vector<unsigned char>& block)
+{
+    vector<unsigned char> unpaddedBlock(block);
 
-      // Расшифровка последнего блока
-    for (size_t i = 0; i < block.size(); i += 8) {
-        uint32_t left = (block[i] << 24) | (block[i + 1] << 16) | (block[i + 2] << 8) | block[i + 3];
-        uint32_t right = (block[i + 4] << 24) | (block[i + 5] << 16) | (block[i + 6] << 8) | block[i + 7];
-        decryptBlock(left, right, roundKeys);
-        block[i] = (left >> 24) & 0xFF;
-        block[i + 1] = (left >> 16) & 0xFF;
-        block[i + 2] = (left >> 8) & 0xFF;
-        block[i + 3] = left & 0xFF;
-        block[i + 4] = (right >> 24) & 0xFF;
-        block[i + 5] = (right >> 16) & 0xFF;
-        block[i + 6] = (right >> 8) & 0xFF;
-        block[i + 7] = right & 0xFF;
+    // Ищем последний байт, равный 0x80
+    auto it = find(unpaddedBlock.begin(), unpaddedBlock.end(), 0x80);
+
+    if (it != unpaddedBlock.end()) {
+        // Если найден байт 0x80, удаляем его и все байты после него
+        unpaddedBlock.erase(it, unpaddedBlock.end());
     }
 
-    // Удаление дополнения
-    size_t paddingSize = block[block.size() - 1];
-    if (paddingSize > 0 && paddingSize <= 8) {
-        block.resize(block.size() - paddingSize);
-    }
+    return unpaddedBlock;
+}
 
-    outputStream.write(reinterpret_cast<const char*>(block.data()), block.size());}
+int main()
+{
+    string keyFile = "key.key";
+    string inputFile = "1.bin";
+    string encryptedFile = "encrypted.enc";
+    string decryptedFile = "decrypted.txt";
 
-int main() {
     try {
-        //string inputFile = "1.bin";
-        string outputFile = "output.enc";
-        string keyFile = "key.key";
-       // encrypt(inputFile, outputFile, keyFile);
-       
-       //cout << "Шифрование успешно завершено" << endl;
+        // Генерация и запись ключа в файл
+        generateAndWriteKey(keyFile);
 
-        string decryptedFile = "decrypted.txt";
-        decrypt(outputFile, decryptedFile, keyFile);
-        cout << "Расшифровка успешно завершена" << endl;
+        vector<unsigned char> key = readKey(keyFile);
+        vector<unsigned char> expandedKey = expandKey(key);
+
+        encryptFile(inputFile, encryptedFile, expandedKey);
+        cout << "File encrypted successfully." << endl;
+
+        decryptFile(encryptedFile, decryptedFile, expandedKey);
+        cout << "File decrypted successfully." << endl;
+
+        // Тестирование помехоустойчивости и имитостойкости
+        // Удаление 1 байта данных из шифртекста
+        string corruptedFile1 = "corrupted1.enc";
+        ofstream corruptedOutFile1(corruptedFile1, ios::binary);
+        ifstream encryptedInFile1(encryptedFile, ios::binary);
+        encryptedInFile1.seekg(1, ios::beg);
+        corruptedOutFile1 << encryptedInFile1.rdbuf();
+        encryptedInFile1.close();
+        corruptedOutFile1.close();
+        decryptFile(corruptedFile1, "decrypted1.txt", expandedKey);
+
+        // Удаление блока данных шифртекста, размер которого не кратен 64 битам
+        string corruptedFile2 = "corrupted2.enc";
+        ofstream corruptedOutFile2(corruptedFile2, ios::binary);
+        ifstream encryptedInFile2(encryptedFile, ios::binary);
+        encryptedInFile2.seekg(12, ios::beg);
+        corruptedOutFile2 << encryptedInFile2.rdbuf();
+        encryptedInFile2.close();
+        corruptedOutFile2.close();
+        decryptFile(corruptedFile2, "decrypted2.txt", expandedKey);
+
+        // Удаление блока данных шифртекста, размер которого кратен 64 битам
+        string corruptedFile3 = "corrupted3.enc";
+        ofstream corruptedOutFile3(corruptedFile3, ios::binary);
+        ifstream encryptedInFile3(encryptedFile, ios::binary);
+        encryptedInFile3.seekg(BLOCK_SIZE / 8, ios::beg);
+        corruptedOutFile3 << encryptedInFile3.rdbuf();
+        encryptedInFile3.close();
+        corruptedOutFile3.close();
+        decryptFile(corruptedFile3, "decrypted3.txt", expandedKey);
+
+        // Добавление блока данных в шифртекст, размер которого кратен 64 битам
+        string corruptedFile4 = "corrupted4.enc";
+        ofstream corruptedOutFile4(corruptedFile4, ios::binary);
+        ifstream encryptedInFile4(encryptedFile, ios::binary);
+        vector<unsigned char> buffer(BLOCK_SIZE / 8);
+        for (int i = 0; i < 3; i++) {
+            encryptedInFile4.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
+            corruptedOutFile4.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        }
+        vector<unsigned char> extraBlock(BLOCK_SIZE / 8, 0xFF);
+        corruptedOutFile4.write(reinterpret_cast<const char*>(extraBlock.data()), extraBlock.size());
+        corruptedOutFile4 << encryptedInFile4.rdbuf();
+        encryptedInFile4.close();
+        corruptedOutFile4.close();
+        decryptFile(corruptedFile4, "decrypted4.txt", expandedKey);
+
+        // Перестановка двух блоков данных шифртекста, размер которых кратен 64 битам
+        string corruptedFile5 = "corrupted5.enc";
+        ofstream corruptedOutFile5(corruptedFile5, ios::binary);
+        ifstream encryptedInFile5(encryptedFile, ios::binary);
+        vector<unsigned char> block1(BLOCK_SIZE / 8);
+        vector<unsigned char> block2(BLOCK_SIZE / 8);
+        char buffer1[BLOCK_SIZE / 8];
+        for (int i = 0; i < 7; i++) {
+            encryptedInFile5.read(buffer1, BLOCK_SIZE / 8);
+            corruptedOutFile5.write(buffer1, BLOCK_SIZE / 8);
+        }
+        encryptedInFile5.read(reinterpret_cast<char*>(block1.data()), block1.size());
+        encryptedInFile5.read(reinterpret_cast<char*>(block2.data()), block2.size());
+        corruptedOutFile5.write(reinterpret_cast<const char*>(block2.data()), block2.size());
+        corruptedOutFile5.write(reinterpret_cast<const char*>(block1.data()), block1.size());
+        corruptedOutFile5 << encryptedInFile5.rdbuf();
+        encryptedInFile5.close();
+        corruptedOutFile5.close();
+        decryptFile(corruptedFile5, "decrypted5.txt", expandedKey);
+
+        // Зашифрование файла размером более 20 КБ
+        string largeInputFile = "large_input.txt";
+        string largeEncryptedFile = "large_encrypted.enc";
+        encryptFile(largeInputFile, largeEncryptedFile, expandedKey);
     } catch (const exception& e) {
-        cerr << "Ошибка: " << e.what() << endl;
+        cerr << "Error: " << e.what() << endl;
         return 1;
     }
+
     return 0;
 }
-/*В данном коде реализованы следующие операции для шифрования:
-
-Развертывание ключа (Key Expansion):
-
-Функция keyExpansion принимает исходный ключ размером 56 бит (7 байт) и разворачивает его до размера 256 бит (32 байта).
-Развернутый ключ используется для генерации раундовых ключей, которые применяются в процессе шифрования и расшифрования.
-Шифрование блока (Block Encryption):
-
-Функция encryptBlock выполняет шифрование одного блока данных размером 64 бита (8 байт).
-Блок данных разделяется на две половины по 32 бита каждая: left и right.
-Выполняется 32 раунда шифрования, где в каждом раунде:
-К правой половине блока применяется функция f с использованием раундового ключа.
-Результат функции f складывается по модулю 2 (XOR) с левой половиной блока.
-Правая и левая половины блока меняются местами.
-После завершения всех раундов шифрования блок данных считается зашифрованным.
-Функция f:
-
-Функция f является частью алгоритма шифрования и применяется к правой половине блока данных в каждом раунде.
-Она выполняет подстановку (замену) байтов с использованием таблицы подстановок (S-блоков) sbox.
-Результат подстановки сдвигается циклически влево на 11 бит.
-К полученному значению применяется операция XOR с раундовым ключом.
-Шифрование данных (Data Encryption):
-
-Функция encrypt выполняет шифрование входных данных, считанных из файла.
-Данные разбиваются на блоки по 8 байт и каждый блок шифруется с помощью функции encryptBlock.
-Если последний блок данных неполный, он дополняется с помощью функции padBlock.
-Зашифрованные блоки данных записываются в выходной файл.
-Дополнение блока (Block Padding):
-
-Функция padBlock выполняет дополнение неполного блока данных в соответствии с процедурой 2 по ГОСТ Р 34.13-2015.
-В конец блока добавляется байт 0x80, за которым следуют байты 0x00 до тех пор, пока размер блока не станет кратным 8 байтам.
-Эти операции в совокупности реализуют алгоритм шифрования "Магма" по ГОСТ Р 34.12-2015 в режиме простой замены по ГОСТ Р 34.13-2015.
-*/
